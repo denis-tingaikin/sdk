@@ -24,7 +24,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/edwarnicke/serialize"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/pkg/errors"
@@ -37,6 +36,7 @@ import (
 	"github.com/networkservicemesh/sdk/pkg/networkservice/core/next"
 	"github.com/networkservicemesh/sdk/pkg/tools/addressof"
 	"github.com/networkservicemesh/sdk/pkg/tools/log"
+	"github.com/networkservicemesh/sdk/pkg/tools/multiexecutor"
 )
 
 type ctxWrapper struct {
@@ -59,7 +59,7 @@ type healServer struct {
 	clients               clientConnMap
 	onHeal                *networkservice.NetworkServiceClient
 	cancelHealMap         map[string]*ctxWrapper
-	cancelHealMapExecutor serialize.Executor
+	cancelHealMapExecutor multiexecutor.MultiExecutor
 	conns                 connectionMap
 }
 
@@ -144,7 +144,7 @@ func (f *healServer) RegisterClient(ctx context.Context, conn *networkservice.Co
 
 func (f *healServer) stopHeal(conn *networkservice.Connection) {
 	var cancelHeal func()
-	<-f.cancelHealMapExecutor.AsyncExec(func() {
+	<-f.cancelHealMapExecutor.AsyncExec(conn.Id, func() {
 		if cancelHealEntry, ok := f.cancelHealMap[conn.GetId()]; ok {
 			cancelHeal = cancelHealEntry.cancel
 			delete(f.cancelHealMap, conn.GetId())
@@ -184,7 +184,7 @@ func (f *healServer) healAsNeeded(baseCtx context.Context, request *networkservi
 	ctx, cancel := context.WithDeadline(f.ctx, expireTime)
 	defer cancel()
 	id := request.GetConnection().GetId()
-	<-f.cancelHealMapExecutor.AsyncExec(func() {
+	<-f.cancelHealMapExecutor.AsyncExec(id, func() {
 		if entry, ok := f.cancelHealMap[id]; ok {
 			go entry.cancel() // TODO - what to do with the errCh here?
 		}
@@ -336,7 +336,7 @@ func (f *healServer) restoreConnection(ctx, baseCtx context.Context, request *ne
 	id := request.GetConnection().GetId()
 
 	var healMapCtx context.Context
-	<-f.cancelHealMapExecutor.AsyncExec(func() {
+	<-f.cancelHealMapExecutor.AsyncExec(id, func() {
 		if entry, ok := f.cancelHealMap[id]; ok {
 			healMapCtx = entry.ctx
 		}
