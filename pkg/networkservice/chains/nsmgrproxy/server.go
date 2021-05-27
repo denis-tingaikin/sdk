@@ -19,27 +19,51 @@ package nsmgrproxy
 
 import (
 	"context"
+	"net/url"
 
 	"github.com/google/uuid"
 	"github.com/networkservicemesh/api/pkg/api/networkservice"
+	"google.golang.org/grpc"
 
+	registryapi "github.com/networkservicemesh/api/pkg/api/registry"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/chains/client"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/chains/endpoint"
+	"github.com/networkservicemesh/sdk/pkg/networkservice/chains/nsmgr"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/authorize"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/connect"
-	"github.com/networkservicemesh/sdk/pkg/networkservice/common/externalips"
+	"github.com/networkservicemesh/sdk/pkg/networkservice/common/discover"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/heal"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/interdomainurl"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/swapip"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/core/adapters"
+	"github.com/networkservicemesh/sdk/pkg/registry"
+	registryconnect "github.com/networkservicemesh/sdk/pkg/registry/common/connect"
+	"github.com/networkservicemesh/sdk/pkg/registry/common/proxy"
+	"github.com/networkservicemesh/sdk/pkg/registry/common/seturl"
+	"github.com/networkservicemesh/sdk/pkg/registry/core/chain"
 	"github.com/networkservicemesh/sdk/pkg/tools/addressof"
+	"github.com/networkservicemesh/sdk/pkg/tools/grpcutils"
 	"github.com/networkservicemesh/sdk/pkg/tools/token"
 )
 
+func (n *nsmgrProxyServer) Register(s *grpc.Server) {
+	grpcutils.RegisterHealthServices(s, n, n.NetworkServiceEndpointRegistryServer(), n.NetworkServiceRegistryServer())
+	networkservice.RegisterNetworkServiceServer(s, n)
+	networkservice.RegisterMonitorConnectionServer(s, n)
+	registryapi.RegisterNetworkServiceRegistryServer(s, n.Registry.NetworkServiceRegistryServer())
+	registryapi.RegisterNetworkServiceEndpointRegistryServer(s, n.Registry.NetworkServiceEndpointRegistryServer())
+}
+
+type nsmgrProxyServer struct {
+	endpoint.Endpoint
+	registry.Registry
+}
+
 type serverOptions struct {
-	name            string
-	authorizeServer networkservice.NetworkServiceServer
-	connectOptions  []connect.Option
+	name                   string
+	authorizeServer        networkservice.NetworkServiceServer
+	connectOptions         []connect.Option
+	registryConnectOptions []registryconnect.Option
 }
 
 // Option modifies option value
@@ -62,6 +86,11 @@ func WithAuthorizeServer(authorizeServer networkservice.NetworkServiceServer) Op
 		o.authorizeServer = authorizeServer
 	}
 }
+func WithRegistryConnectOptions(connectOptions ...registryconnect.Option) Option {
+	return func(o *serverOptions) {
+		o.registryConnectOptions = connectOptions
+	}
+}
 
 // WithConnectOptions sets connect Options for the server
 func WithConnectOptions(connectOptions ...connect.Option) Option {
@@ -71,11 +100,8 @@ func WithConnectOptions(connectOptions ...connect.Option) Option {
 }
 
 // NewServer creates new proxy NSMgr
-func NewServer(ctx context.Context, tokenGenerator token.GeneratorFunc, options ...Option) endpoint.Endpoint {
-	type nsmgrProxyServer struct {
-		endpoint.Endpoint
-	}
-	rv := nsmgrProxyServer{}
+func NewServer(ctx context.Context, u, proxyURL *url.URL, regClientConn grpc.ClientConnInterface, tokenGenerator token.GeneratorFunc, options ...Option) nsmgr.Nsmgr {
+	rv := new(nsmgrProxyServer)
 
 	opts := &serverOptions{
 		name:            "nsmgr-proxy-" + uuid.New().String(),
@@ -85,12 +111,14 @@ func NewServer(ctx context.Context, tokenGenerator token.GeneratorFunc, options 
 		opt(opts)
 	}
 
+	var nseStockServer registryapi.NetworkServiceEndpointRegistryServer
+
 	rv.Endpoint = endpoint.NewServer(ctx, tokenGenerator,
 		endpoint.WithName(opts.name),
 		endpoint.WithAuthorizeServer(opts.authorizeServer),
 		endpoint.WithAdditionalFunctionality(
-			interdomainurl.NewServer(),
-			externalips.NewServer(ctx),
+			interdomainurl.NewServer(&nseStockServer),
+			discover.NewServer(registryapi.NewNetworkServiceRegistryClient(regClientConn), registryapi.NewNetworkServiceEndpointRegistryClient(regClientConn)),
 			swapip.NewServer(),
 			heal.NewServer(ctx, addressof.NetworkServiceClient(adapters.NewServerToClient(rv))),
 			connect.NewServer(ctx,
@@ -100,5 +128,23 @@ func NewServer(ctx context.Context, tokenGenerator token.GeneratorFunc, options 
 			),
 		),
 	)
+
+	var nsServerChain = chain.NewNetworkServiceRegistryServer(
+		proxy.NewNetworkServiceRegistryServer(proxyURL),
+		registryconnect.NewNetworkServiceRegistryServer(ctx, func(ctx context.Context, cc grpc.ClientConnInterface) registryapi.NetworkServiceRegistryClient {
+			return chain.NewNetworkServiceRegistryClient(registryapi.NewNetworkServiceRegistryClient(cc))
+		}, opts.registryConnectOptions...),
+	)
+
+	var nseServerChain = chain.NewNetworkServiceEndpointRegistryServer(
+		proxy.NewNetworkServiceEndpointRegistryServer(proxyURL),
+		seturl.NewNetworkServiceEndpointRegistryServer(u),
+		nseStockServer,
+		registryconnect.NewNetworkServiceEndpointRegistryServer(ctx, func(ctx context.Context, cc grpc.ClientConnInterface) registryapi.NetworkServiceEndpointRegistryClient {
+			return chain.NewNetworkServiceEndpointRegistryClient(registryapi.NewNetworkServiceEndpointRegistryClient(cc))
+		}, opts.registryConnectOptions...),
+	)
+
+	rv.Registry = registry.NewServer(nsServerChain, nseServerChain)
 	return rv
 }

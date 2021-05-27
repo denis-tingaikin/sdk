@@ -25,6 +25,11 @@ func Is(s string) bool {
 	return strings.Contains(s, identifier)
 }
 
+// Not returns true if pased string is not related to interdomain.
+func Not(s string) bool {
+	return !Is(s)
+}
+
 // Join concatenates strings with intedomain identifier
 func Join(s ...string) string {
 	return strings.Join(s, identifier)

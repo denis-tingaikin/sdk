@@ -30,7 +30,7 @@ import (
 type Registry interface {
 	// NetworkServiceRegistryServer returns network service server
 	NetworkServiceRegistryServer() registry.NetworkServiceRegistryServer
-	// NetworkServiceRegistryServer returns network service  endpoint server
+	// NetworkServiceRegistryServer returns network service endpoint server
 	NetworkServiceEndpointRegistryServer() registry.NetworkServiceEndpointRegistryServer
 	Register(s *grpc.Server)
 }

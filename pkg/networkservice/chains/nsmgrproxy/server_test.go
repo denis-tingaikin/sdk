@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
 
 	"github.com/networkservicemesh/api/pkg/api/networkservice"
 	"github.com/networkservicemesh/api/pkg/api/networkservice/mechanisms/cls"
@@ -34,34 +33,35 @@ import (
 )
 
 func TestNSMGR_InterdomainUseCase(t *testing.T) {
-	t.Cleanup(func() { goleak.VerifyNone(t) })
-
-	const remoteRegistryDomain = "domain2.local.registry"
+	//	t.Cleanup(func() { goleak.VerifyNone(t) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	dnsServer := new(sandbox.FakeDNSResolver)
+	// ctx = log.WithLog(ctx, logruslogger.New(ctx))
+	// log.EnableTracing(true)
 
-	domain1 := sandbox.NewBuilder(t).
+	var dnsServer = new(sandbox.FakeDNSResolver)
+
+	cluster1 := sandbox.NewBuilder(t).
 		SetNodesCount(1).
 		SetContext(ctx).
 		SetDNSResolver(dnsServer).
+		SetDNSDomainName("cluster1").
 		Build()
 
-	domain2 := sandbox.NewBuilder(t).
+	cluster2 := sandbox.NewBuilder(t).
 		SetNodesCount(1).
+		SetDNSDomainName("cluster2").
 		SetDNSResolver(dnsServer).
 		SetContext(ctx).
 		Build()
-
-	require.NoError(t, dnsServer.Register(remoteRegistryDomain, domain2.Registry.URL))
 
 	nsReg := &registry.NetworkService{
 		Name: "my-service-interdomain",
 	}
 
-	_, err := domain2.Nodes[0].NSRegistryClient.Register(ctx, nsReg)
+	_, err := cluster2.Nodes[0].NSRegistryClient.Register(ctx, nsReg)
 	require.NoError(t, err)
 
 	nseReg := &registry.NetworkServiceEndpoint{
@@ -69,10 +69,10 @@ func TestNSMGR_InterdomainUseCase(t *testing.T) {
 		NetworkServiceNames: []string{nsReg.Name},
 	}
 
-	_, err = domain2.Nodes[0].NewEndpoint(ctx, nseReg, sandbox.GenerateTestToken)
+	_, err = cluster2.Nodes[0].NewEndpoint(ctx, nseReg, sandbox.GenerateTestToken)
 	require.NoError(t, err)
 
-	nsc := domain1.Nodes[0].NewClient(ctx, sandbox.GenerateTestToken)
+	nsc := cluster1.Nodes[0].NewClient(ctx, sandbox.GenerateTestToken)
 
 	request := &networkservice.NetworkServiceRequest{
 		MechanismPreferences: []*networkservice.Mechanism{
@@ -80,7 +80,7 @@ func TestNSMGR_InterdomainUseCase(t *testing.T) {
 		},
 		Connection: &networkservice.Connection{
 			Id:             "1",
-			NetworkService: fmt.Sprint(nsReg.Name, "@", remoteRegistryDomain),
+			NetworkService: fmt.Sprint(nsReg.Name, "@", cluster2.Name),
 			Context:        &networkservice.ConnectionContext{},
 		},
 	}
@@ -89,7 +89,7 @@ func TestNSMGR_InterdomainUseCase(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, conn)
 
-	require.Equal(t, 9, len(conn.Path.PathSegments))
+	require.Equal(t, 10, len(conn.Path.PathSegments))
 
 	// Simulate refresh from client.
 
@@ -99,5 +99,83 @@ func TestNSMGR_InterdomainUseCase(t *testing.T) {
 	conn, err = nsc.Request(ctx, refreshRequest)
 	require.NoError(t, err)
 	require.NotNil(t, conn)
-	require.Equal(t, 9, len(conn.Path.PathSegments))
+	require.Equal(t, 10, len(conn.Path.PathSegments))
+}
+
+func TestNSMGR_FloatingInterdomainUseCase(t *testing.T) {
+	//t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	var dnsServer = new(sandbox.FakeDNSResolver)
+
+	cluster1 := sandbox.NewBuilder(t).
+		SetNodesCount(1).
+		SetContext(ctx).
+		SetDNSResolver(dnsServer).
+		SetDNSDomainName("cluster1").
+		Build()
+
+	cluster2 := sandbox.NewBuilder(t).
+		SetNodesCount(1).
+		SetDNSDomainName("cluster2").
+		SetDNSResolver(dnsServer).
+		SetContext(ctx).
+		Build()
+
+	floating := sandbox.NewBuilder(t).
+		SetNodesCount(1).
+		SetDNSDomainName("floating.domain").
+		SetDNSResolver(dnsServer).
+		SetNSMgrSupplier(nil).
+		SetNSMgrProxySupplier(nil).
+		SetRegistryProxySupplier(nil).
+		SetNodeSetup(nil).
+		SetContext(ctx).
+		Build()
+
+	nsReg := &registry.NetworkService{
+		Name: "my-service-interdomain@" + floating.Name,
+	}
+
+	_, err := cluster2.Nodes[0].NSRegistryClient.Register(ctx, nsReg)
+	require.NoError(t, err)
+
+	nseReg := &registry.NetworkServiceEndpoint{
+		Name:                "final-endpoint@" + floating.Name,
+		NetworkServiceNames: []string{"my-service-interdomain"},
+	}
+
+	_, err = cluster2.Nodes[0].NewEndpoint(ctx, nseReg, sandbox.GenerateTestToken)
+	require.NoError(t, err)
+
+	nsc := cluster1.Nodes[0].NewClient(ctx, sandbox.GenerateTestToken)
+
+	request := &networkservice.NetworkServiceRequest{
+		MechanismPreferences: []*networkservice.Mechanism{
+			{Cls: cls.LOCAL, Type: kernel.MECHANISM},
+		},
+		Connection: &networkservice.Connection{
+			Id:             "1",
+			NetworkService: fmt.Sprint(nsReg.Name),
+			Context:        &networkservice.ConnectionContext{},
+		},
+	}
+
+	conn, err := nsc.Request(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+
+	require.Equal(t, 10, len(conn.Path.PathSegments))
+
+	// Simulate refresh from client.
+
+	refreshRequest := request.Clone()
+	refreshRequest.Connection = conn.Clone()
+
+	conn, err = nsc.Request(ctx, refreshRequest)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.Equal(t, 10, len(conn.Path.PathSegments))
 }

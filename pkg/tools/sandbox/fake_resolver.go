@@ -31,7 +31,8 @@ import (
 // FakeDNSResolver implements dnsresolve.Resolver interface and can be used for logic DNS testing
 type FakeDNSResolver struct {
 	sync.Mutex
-	ports map[string]string
+	ports       map[string]string
+	hostToCNAME map[string]string
 }
 
 // LookupSRV lookups DNS SRV record
@@ -69,20 +70,37 @@ func (f *FakeDNSResolver) LookupIPAddr(_ context.Context, host string) ([]net.IP
 	return nil, errors.New("not found")
 }
 
+func (f *FakeDNSResolver) LookupCNAME(ctx context.Context, host string) (cname string, err error) {
+	if v, ok := f.hostToCNAME[host]; ok {
+		return v, nil
+	}
+
+	return "", errors.New("not found")
+}
+
+func (f *FakeDNSResolver) AddCNAMEEntry(host, chanme string) {
+	if f.hostToCNAME == nil {
+		f.hostToCNAME = make(map[string]string)
+	}
+	f.hostToCNAME[host] = chanme
+}
+
 // Register adds new DNS record by passed url.URL
-func (f *FakeDNSResolver) Register(name string, u *url.URL) error {
+func (f *FakeDNSResolver) AddSRVEntry(name, service string, u *url.URL) {
 	if u == nil {
-		return errors.New("u cannot be nil")
+		panic("u cannot be nil")
 	}
 	f.Lock()
 	defer f.Unlock()
 	if f.ports == nil {
 		f.ports = map[string]string{}
 	}
-	key := fmt.Sprintf("%v.%v", dnsresolve.NSMRegistryService, name)
+	key := fmt.Sprintf("%v.%v", service, name)
 	var err error
-	_, f.ports[key], err = net.SplitHostPort(u.Host)
-	return err
+	if _, f.ports[key], err = net.SplitHostPort(u.Host); err != nil {
+		panic(err.Error())
+	}
+
 }
 
 var _ dnsresolve.Resolver = (*FakeDNSResolver)(nil)

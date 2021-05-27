@@ -27,7 +27,6 @@ import (
 	"github.com/networkservicemesh/sdk/pkg/registry"
 	"github.com/networkservicemesh/sdk/pkg/registry/common/connect"
 	"github.com/networkservicemesh/sdk/pkg/registry/common/dnsresolve"
-	"github.com/networkservicemesh/sdk/pkg/registry/common/swap"
 	"github.com/networkservicemesh/sdk/pkg/registry/core/chain"
 )
 
@@ -35,13 +34,11 @@ import (
 func NewServer(ctx context.Context, dnsResolver dnsresolve.Resolver, handlingDNSDomain string, proxyNSMgrURL *url.URL, options ...grpc.DialOption) registry.Registry {
 	nseChain := chain.NewNetworkServiceEndpointRegistryServer(
 		dnsresolve.NewNetworkServiceEndpointRegistryServer(dnsresolve.WithResolver(dnsResolver)),
-		swap.NewNetworkServiceEndpointRegistryServer(handlingDNSDomain, proxyNSMgrURL),
 		connect.NewNetworkServiceEndpointRegistryServer(ctx, func(ctx context.Context, cc grpc.ClientConnInterface) registryapi.NetworkServiceEndpointRegistryClient {
 			return registryapi.NewNetworkServiceEndpointRegistryClient(cc)
 		}, connect.WithClientDialOptions(options...)))
 	nsChain := chain.NewNetworkServiceRegistryServer(
 		dnsresolve.NewNetworkServiceRegistryServer(dnsresolve.WithResolver(dnsResolver)),
-		swap.NewNetworkServiceRegistryServer(handlingDNSDomain),
 		connect.NewNetworkServiceRegistryServer(ctx, func(ctx context.Context, cc grpc.ClientConnInterface) registryapi.NetworkServiceRegistryClient {
 			return chain.NewNetworkServiceRegistryClient(registryapi.NewNetworkServiceRegistryClient(cc))
 		}, connect.WithClientDialOptions(options...)))

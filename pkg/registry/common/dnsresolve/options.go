@@ -18,7 +18,8 @@ package dnsresolve
 
 type configurable interface {
 	setResolver(Resolver)
-	setService(string)
+	setNSMgrProxyService(string)
+	setRegistryService(string)
 }
 
 // Option is option to configure dnsresovle chain elements
@@ -39,9 +40,22 @@ func WithResolver(r Resolver) Option {
 	})
 }
 
-// WithService sets default service to lookup DNS SRV records
-func WithService(service string) Option {
+// WithNSMgrProxyService sets default service of nsmgr-proxy to lookup DNS SRV records
+func WithNSMgrProxyService(service string) Option {
 	return optionApplyFunc(func(c configurable) {
-		c.setService(service)
+		c.setNSMgrProxyService(service)
+	})
+}
+
+// WithRegistryService sets default service of nsmgr-proxy to lookup DNS SRV records
+func WithRegistryService(service string) Option {
+	return optionApplyFunc(func(c configurable) {
+		c.setRegistryService(service)
+	})
+}
+
+func WithAPIService(service string) Option {
+	return optionApplyFunc(func(c configurable) {
+		c.setRegistryService(service)
 	})
 }

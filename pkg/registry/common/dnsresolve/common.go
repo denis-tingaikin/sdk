@@ -25,6 +25,9 @@ import (
 	"github.com/pkg/errors"
 )
 
+const DefaultNsmgrProxyService = "nsm-nsmgr-proxy-svc"
+const DefaultRegistryService = "nsm-registry-svc"
+
 // Resolver is DNS resolver
 type Resolver interface {
 	// LookupSRV tries to resolve an SRV query of the given service,
@@ -35,6 +38,11 @@ type Resolver interface {
 	// LookupIPAddr looks up host using the local resolver.
 	// It returns a slice of that host's IPv4 and IPv6 addresses.
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
+	// LookupCNAME returns the canonical name for the given host.
+	// Callers that do not care about the canonical name can call
+	// LookupHost or LookupIP directly; both take care of resolving
+	// the canonical name as part of the lookup.
+	LookupCNAME(ctx context.Context, host string) (cname string, err error)
 }
 
 func parseIPPort(domain string) (ip, port interface{}) {

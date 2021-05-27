@@ -33,7 +33,7 @@ import (
 )
 
 // SupplyNSMgrProxyFunc nsmgr proxy
-type SupplyNSMgrProxyFunc func(context.Context, token.GeneratorFunc, ...nsmgrproxy.Option) endpoint.Endpoint
+type SupplyNSMgrProxyFunc func(ctx context.Context, proxyURL, u *url.URL, cc grpc.ClientConnInterface, tokenGenerator token.GeneratorFunc, options ...nsmgrproxy.Option) nsmgr.Nsmgr
 
 // SupplyNSMgrFunc supplies NSMGR
 type SupplyNSMgrFunc func(context.Context, token.GeneratorFunc, ...nsmgr.Option) nsmgr.Nsmgr
